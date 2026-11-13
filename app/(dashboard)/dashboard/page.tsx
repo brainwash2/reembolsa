@@ -3,50 +3,43 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 
 export default async function DashboardPage() {
   const supabase = await createClient()
-  
-  const { data: shipments, error } = await supabase.from('shipments').select('*')
-  
-  if (error) console.error(error)
+  const { data: shipments } = await supabase.from('shipments').select('*')
 
-  const totalLockedCash = 56440000
-  const pendingShipments = shipments?.filter(s => s.status === 'documents_pending').length || 0
-  
+  const pendingCount = shipments?.filter(s => s.status === 'documents_pending').length || 0
+  const totalLockedCash = 56440000 // Plus tard, on calculera ça via la table iva_claims
+
   return (
     <div className="p-8 space-y-6">
-      <h1 className="text-3xl font-bold">Dashboard</h1>
+      <div>
+        <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
+        <p className="text-sm text-slate-500">Overview of your IVA Exportador recovery pipeline</p>
+      </div>
       
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Card>
-          <CardHeader><CardTitle>Locked Cash</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-slate-500">Locked Cash</CardTitle></CardHeader>
           <CardContent><p className="text-2xl font-bold">${totalLockedCash.toLocaleString()}</p></CardContent>
         </Card>
         <Card>
-          <CardHeader><CardTitle>Shipments Pending</CardTitle></CardHeader>
-          <CardContent><p className="text-2xl font-bold">{pendingShipments}</p></CardContent>
+          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-slate-500">Shipments Pending</CardTitle></CardHeader>
+          <CardContent><p className="text-2xl font-bold">{pendingCount}</p></CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-slate-500">Total Shipments</CardTitle></CardHeader>
+          <CardContent><p className="text-2xl font-bold">{shipments?.length || 0}</p></CardContent>
         </Card>
       </div>
 
-      <div className="border rounded-lg mt-8">
-        <table className="w-full text-sm text-left">
-          <thead className="bg-slate-50 border-b">
-            <tr>
-              <th className="px-6 py-3">Reference</th>
-              <th className="px-6 py-3">Buyer</th>
-              <th className="px-6 py-3">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {shipments?.map((shipment) => (
-              <tr key={shipment.id} className="border-b">
-                <td className="px-6 py-4 font-medium">{shipment.reference}</td>
-                <td className="px-6 py-4">{shipment.buyer}</td>
-                <td className="px-6 py-4">
-                  <span className="px-2 py-1 bg-slate-100 rounded-full text-xs">{shipment.status}</span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="border rounded-lg bg-white p-6 mt-8">
+        <h3 className="font-bold mb-4">Recent Shipments</h3>
+        <div className="space-y-2">
+           {shipments?.slice(0, 3).map(s => (
+             <div key={s.id} className="flex justify-between p-3 border rounded text-sm">
+               <span>{s.reference} - {s.buyer}</span>
+               <span className="font-medium">{s.status}</span>
+             </div>
+           ))}
+        </div>
       </div>
     </div>
   )
