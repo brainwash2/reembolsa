@@ -36,10 +36,8 @@ export default async function DashboardPage() {
         <Card>
           <CardHeader>
             <CardTitle>Cash flow forecast (CLP millions)</CardTitle>
-            <p className="text-sm text-slate-500">Expected refunds vs. remaining locked cash</p>
           </CardHeader>
           <CardContent className="h-[300px]">
-             {/* On l'appelle sans lui passer de props, il utilisera ses fausses données pour l'instant */}
              <CashflowChart />
           </CardContent>
         </Card>
@@ -52,7 +50,6 @@ export default async function DashboardPage() {
             {shipments?.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-[200px] text-slate-500">
                 <p>No shipments yet.</p>
-                <p className="text-sm">Go to Shipments to add your first export.</p>
               </div>
             ) : (
               <div className="space-y-2">

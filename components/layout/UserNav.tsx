@@ -10,23 +10,16 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { logout } from "@/actions/auth"
-import { LogOut, User as UserIcon, Settings } from "lucide-react"
+import { LogOut, User as UserIcon } from "lucide-react"
 import Link from "next/link"
 
-interface UserNavProps {
-  orgName: string
-  email: string
-}
-
-export function UserNav({ orgName, email }: UserNavProps) {
-  const initials = orgName.substring(0, 2).toUpperCase()
-
+export function UserNav({ orgName, email }: { orgName: string, email: string }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button className="outline-none">
           <Avatar className="h-9 w-9 bg-teal-600 text-white cursor-pointer hover:opacity-80 transition-opacity">
-            <AvatarFallback>{initials}</AvatarFallback>
+            <AvatarFallback>{orgName.substring(0, 2).toUpperCase()}</AvatarFallback>
           </Avatar>
         </button>
       </DropdownMenuTrigger>
@@ -40,20 +33,12 @@ export function UserNav({ orgName, email }: UserNavProps) {
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild>
           <Link href="/settings" className="cursor-pointer w-full flex items-center">
-            <UserIcon className="mr-2 h-4 w-4" />
-            <span>Profile</span>
-          </Link>
-        </DropdownMenuItem>
-        <DropdownMenuItem asChild>
-          <Link href="/settings" className="cursor-pointer w-full flex items-center">
-            <Settings className="mr-2 h-4 w-4" />
-            <span>Settings</span>
+            <UserIcon className="mr-2 h-4 w-4" /> Profile
           </Link>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem className="text-red-600 cursor-pointer focus:text-red-600 focus:bg-red-50" onClick={() => logout()}>
-          <LogOut className="mr-2 h-4 w-4" />
-          <span>Log out</span>
+          <LogOut className="mr-2 h-4 w-4" /> Log out
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
