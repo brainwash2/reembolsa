@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { CashflowChart } from '@/components/cashflow-chart' // On réutilise le composant de Bolt
 
 export default async function DashboardPage() {
   const supabase = await createClient()
@@ -8,6 +9,16 @@ export default async function DashboardPage() {
 
   const pendingCount = shipments?.filter(s => s.status === 'documents_pending').length || 0
   const lockedCash = claims?.reduce((sum, claim) => sum + (claim.amount_clp || 0), 0) || 0
+
+  // Données vides pour le graphique (pour l'instant)
+  const emptyChartData = [
+    { month: "Nov 2026", expectedRefunds: 0, lockedCash: lockedCash },
+    { month: "Dec 2026", expectedRefunds: 0, lockedCash: lockedCash },
+    { month: "Jan 2027", expectedRefunds: 0, lockedCash: lockedCash },
+    { month: "Feb 2027", expectedRefunds: 0, lockedCash: lockedCash },
+    { month: "Mar 2027", expectedRefunds: 0, lockedCash: lockedCash },
+    { month: "Apr 2027", expectedRefunds: 0, lockedCash: lockedCash },
+  ]
 
   return (
     <div className="p-8 space-y-6">
@@ -19,32 +30,52 @@ export default async function DashboardPage() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-slate-500">Locked Cash (CLP)</CardTitle></CardHeader>
-          <CardContent><p className="text-2xl font-bold">${lockedCash.toLocaleString()}</p></CardContent>
+          <CardContent><p className="text-3xl font-bold">${lockedCash.toLocaleString()}</p></CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-slate-500">Shipments Pending</CardTitle></CardHeader>
-          <CardContent><p className="text-2xl font-bold">{pendingCount}</p></CardContent>
+          <CardContent><p className="text-3xl font-bold">{pendingCount}</p></CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-slate-500">Total Shipments</CardTitle></CardHeader>
-          <CardContent><p className="text-2xl font-bold">{shipments?.length || 0}</p></CardContent>
+          <CardContent><p className="text-3xl font-bold">{shipments?.length || 0}</p></CardContent>
         </Card>
       </div>
 
-      <div className="border rounded-lg bg-white p-6 mt-8">
-        <h3 className="font-bold mb-4">Recent Shipments</h3>
-        {shipments?.length === 0 ? (
-          <p className="text-sm text-slate-500">No shipments yet. Create one to get started.</p>
-        ) : (
-          <div className="space-y-2">
-            {shipments?.slice(0, 5).map(s => (
-              <div key={s.id} className="flex justify-between p-3 border rounded text-sm">
-                <span>{s.reference} - {s.buyer}</span>
-                <span className="font-medium capitalize">{s.status.replace('_', ' ')}</span>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-8">
+        <Card>
+          <CardHeader>
+            <CardTitle>Cash flow forecast (CLP millions)</CardTitle>
+            <p className="text-sm text-slate-500">Expected refunds vs. remaining locked cash</p>
+          </CardHeader>
+          <CardContent className="h-[300px]">
+             {/* On passe les données vides au graphique de Bolt */}
+             <CashflowChart data={emptyChartData} />
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Recent Shipments</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {shipments?.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-[200px] text-slate-500">
+                <p>No shipments yet.</p>
+                <p className="text-sm">Go to Shipments to add your first export.</p>
               </div>
-            ))}
-          </div>
-        )}
+            ) : (
+              <div className="space-y-2">
+                {shipments?.slice(0, 5).map(s => (
+                  <div key={s.id} className="flex justify-between p-3 border rounded text-sm">
+                    <span>{s.reference} - {s.buyer}</span>
+                    <span className="font-medium capitalize">{s.status.replace('_', ' ')}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </div>
     </div>
   )

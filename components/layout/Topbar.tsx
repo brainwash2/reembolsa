@@ -1,11 +1,13 @@
 import { createClient } from '@/lib/supabase/server'
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { UserNav } from './UserNav'
 
 export async function Topbar() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   
   let orgName = "My Company"
+  let email = user?.email || ""
+
   if (user) {
     const { data: member } = await supabase
       .from('org_members')
@@ -22,9 +24,7 @@ export async function Topbar() {
       <div className="text-sm font-semibold text-slate-800">
         {orgName}
       </div>
-      <Avatar className="h-8 w-8 bg-teal-600 text-white">
-        <AvatarFallback>{orgName.substring(0, 2).toUpperCase()}</AvatarFallback>
-      </Avatar>
+      <UserNav orgName={orgName} email={email} />
     </header>
   )
 }
