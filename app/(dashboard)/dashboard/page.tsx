@@ -1,6 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { CashflowChart } from '@/components/cashflow-chart' // On réutilise le composant de Bolt
+import { CashflowChart } from '@/components/cashflow-chart'
 
 export default async function DashboardPage() {
   const supabase = await createClient()
@@ -9,16 +9,6 @@ export default async function DashboardPage() {
 
   const pendingCount = shipments?.filter(s => s.status === 'documents_pending').length || 0
   const lockedCash = claims?.reduce((sum, claim) => sum + (claim.amount_clp || 0), 0) || 0
-
-  // Données vides pour le graphique (pour l'instant)
-  const emptyChartData = [
-    { month: "Nov 2026", expectedRefunds: 0, lockedCash: lockedCash },
-    { month: "Dec 2026", expectedRefunds: 0, lockedCash: lockedCash },
-    { month: "Jan 2027", expectedRefunds: 0, lockedCash: lockedCash },
-    { month: "Feb 2027", expectedRefunds: 0, lockedCash: lockedCash },
-    { month: "Mar 2027", expectedRefunds: 0, lockedCash: lockedCash },
-    { month: "Apr 2027", expectedRefunds: 0, lockedCash: lockedCash },
-  ]
 
   return (
     <div className="p-8 space-y-6">
@@ -49,8 +39,8 @@ export default async function DashboardPage() {
             <p className="text-sm text-slate-500">Expected refunds vs. remaining locked cash</p>
           </CardHeader>
           <CardContent className="h-[300px]">
-             {/* On passe les données vides au graphique de Bolt */}
-             <CashflowChart data={emptyChartData} />
+             {/* On l'appelle sans lui passer de props, il utilisera ses fausses données pour l'instant */}
+             <CashflowChart />
           </CardContent>
         </Card>
 
