@@ -13,14 +13,13 @@ export async function Topbar() {
       .eq('user_id', user.id)
       .single()
     if (member && member.organizations) {
-      // @ts-ignore
-      orgName = member.organizations.name
+      orgName = (member.organizations as any).name
     }
   }
 
   return (
     <header className="h-16 border-b bg-white flex items-center justify-between px-8">
-      <div className="text-sm font-medium text-slate-600">
+      <div className="text-sm font-semibold text-slate-800">
         {orgName}
       </div>
       <Avatar className="h-8 w-8 bg-teal-600 text-white">

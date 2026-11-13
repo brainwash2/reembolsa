@@ -1,5 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
+import { createShipment } from '@/actions/shipments'
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 
 export default async function ShipmentsPage() {
   const supabase = await createClient()
@@ -7,12 +9,22 @@ export default async function ShipmentsPage() {
 
   return (
     <div className="p-8 space-y-6">
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Shipments</h1>
-          <p className="text-sm text-slate-500">{shipments?.length || 0} export shipments tracked</p>
-        </div>
-        <Button className="bg-teal-600 hover:bg-teal-700">+ New shipment</Button>
+      <div>
+        <h1 className="text-2xl font-bold text-slate-900">Shipments</h1>
+        <p className="text-sm text-slate-500">{shipments?.length || 0} export shipments tracked</p>
+      </div>
+
+      {/* Formulaire de création rapide */}
+      <div className="border rounded-lg bg-white p-6">
+        <h3 className="font-bold mb-4 text-sm">Add a new export shipment</h3>
+        <form action={createShipment} className="flex gap-2 items-end flex-wrap">
+          <div className="space-y-1"><label className="text-xs font-medium text-slate-500">Reference</label><Input name="reference" placeholder="EXP-001" required /></div>
+          <div className="space-y-1"><label className="text-xs font-medium text-slate-500">Buyer</label><Input name="buyer" placeholder="Company Name" required /></div>
+          <div className="space-y-1"><label className="text-xs font-medium text-slate-500">Destination</label><Input name="destination" placeholder="Country" required /></div>
+          <div className="space-y-1"><label className="text-xs font-medium text-slate-500">Amount</label><Input name="invoice_amount" type="number" step="0.01" placeholder="10000" required /></div>
+          <div className="space-y-1"><label className="text-xs font-medium text-slate-500">Currency</label><Input name="currency" placeholder="USD" maxLength={3} required /></div>
+          <Button type="submit" className="bg-teal-600 hover:bg-teal-700">Save</Button>
+        </form>
       </div>
 
       <div className="border rounded-lg bg-white overflow-hidden">
@@ -28,10 +40,10 @@ export default async function ShipmentsPage() {
           </thead>
           <tbody>
             {shipments?.length === 0 && (
-              <tr><td colSpan={5} className="px-6 py-8 text-center text-slate-500">No shipments found. Create your first one.</td></tr>
+              <tr><td colSpan={5} className="px-6 py-8 text-center text-slate-500">No shipments found. Create your first one above.</td></tr>
             )}
             {shipments?.map((s) => (
-              <tr key={s.id} className="border-b last:border-0">
+              <tr key={s.id} className="border-b last:border-0 hover:bg-slate-50">
                 <td className="px-6 py-4 font-medium">{s.reference}</td>
                 <td className="px-6 py-4">{s.buyer}</td>
                 <td className="px-6 py-4">{s.destination}</td>
