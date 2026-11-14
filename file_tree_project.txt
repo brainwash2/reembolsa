@@ -1,0 +1,107 @@
+.
+├── actions
+│   ├── auth.ts
+│   └── shipments.ts
+├── app
+│   ├── (dashboard)
+│   │   ├── dashboard
+│   │   │   └── page.tsx
+│   │   ├── iva
+│   │   │   └── page.tsx
+│   │   ├── layout.tsx
+│   │   ├── settings
+│   │   │   └── page.tsx
+│   │   └── shipments
+│   │       ├── [id]
+│   │       │   └── page.tsx
+│   │       └── page.tsx
+│   ├── globals.css
+│   ├── layout.tsx
+│   ├── login
+│   │   └── page.tsx
+│   ├── page.tsx
+│   └── signup
+│       └── page.tsx
+├── components
+│   ├── cashflow-chart.tsx
+│   ├── claim-stepper.tsx
+│   ├── issues-panel.tsx
+│   ├── kpi-card.tsx
+│   ├── layout
+│   │   ├── Sidebar.tsx
+│   │   ├── Topbar.tsx
+│   │   └── UserNav.tsx
+│   ├── status-badge.tsx
+│   ├── ui
+│   │   ├── accordion.tsx
+│   │   ├── alert-dialog.tsx
+│   │   ├── alert.tsx
+│   │   ├── aspect-ratio.tsx
+│   │   ├── avatar.tsx
+│   │   ├── badge.tsx
+│   │   ├── breadcrumb.tsx
+│   │   ├── button.tsx
+│   │   ├── calendar.tsx
+│   │   ├── card.tsx
+│   │   ├── carousel.tsx
+│   │   ├── chart.tsx
+│   │   ├── checkbox.tsx
+│   │   ├── collapsible.tsx
+│   │   ├── command.tsx
+│   │   ├── context-menu.tsx
+│   │   ├── dialog.tsx
+│   │   ├── drawer.tsx
+│   │   ├── dropdown-menu.tsx
+│   │   ├── form.tsx
+│   │   ├── hover-card.tsx
+│   │   ├── input-otp.tsx
+│   │   ├── input.tsx
+│   │   ├── label.tsx
+│   │   ├── menubar.tsx
+│   │   ├── navigation-menu.tsx
+│   │   ├── pagination.tsx
+│   │   ├── popover.tsx
+│   │   ├── progress.tsx
+│   │   ├── radio-group.tsx
+│   │   ├── resizable.tsx
+│   │   ├── scroll-area.tsx
+│   │   ├── select.tsx
+│   │   ├── separator.tsx
+│   │   ├── sheet.tsx
+│   │   ├── skeleton.tsx
+│   │   ├── slider.tsx
+│   │   ├── sonner.tsx
+│   │   ├── switch.tsx
+│   │   ├── table.tsx
+│   │   ├── tabs.tsx
+│   │   ├── textarea.tsx
+│   │   ├── toaster.tsx
+│   │   ├── toast.tsx
+│   │   ├── toggle-group.tsx
+│   │   ├── toggle.tsx
+│   │   └── tooltip.tsx
+│   └── upload-zone.tsx
+├── components.json
+├── file_tree_project.txt
+├── hooks
+│   └── use-toast.ts
+├── lib
+│   ├── format.ts
+│   ├── mock-data.ts
+│   ├── supabase
+│   │   ├── client.ts
+│   │   └── server.ts
+│   └── utils.ts
+├── netlify.toml
+├── next.config.js
+├── next-env.d.ts
+├── package.json
+├── package-lock.json
+├── postcss.config.js
+├── proxy.ts
+├── supabase
+│   └── config.toml
+├── tailwind.config.ts
+└── tsconfig.json
+
+18 directories, 87 files
