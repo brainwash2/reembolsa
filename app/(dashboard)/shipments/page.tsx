@@ -1,4 +1,5 @@
 export const dynamic = 'force-dynamic'
+
 import { createClient } from '@/lib/supabase/server'
 import { createShipment } from '@/actions/shipments'
 import { Button } from "@/components/ui/button"
@@ -15,7 +16,6 @@ export default async function ShipmentsPage() {
         <p className="text-sm text-slate-500">{shipments?.length || 0} export shipments tracked</p>
       </div>
 
-      {/* Formulaire de création rapide */}
       <div className="border rounded-lg bg-white p-6">
         <h3 className="font-bold mb-4 text-sm">Add a new export shipment</h3>
         <form action={createShipment} className="flex gap-2 items-end flex-wrap">

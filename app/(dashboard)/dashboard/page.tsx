@@ -1,12 +1,15 @@
 export const dynamic = 'force-dynamic'
+
 import { createClient } from '@/lib/supabase/server'
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { CashflowChart } from '@/components/cashflow-chart'
 
 export default async function DashboardPage() {
   const supabase = await createClient()
-  const { data: shipments } = await supabase.from('shipments').select('*')
+  const { data: shipments, error } = await supabase.from('shipments').select('*')
   const { data: claims } = await supabase.from('iva_claims').select('*').neq('status', 'paid')
+
+  if (error) console.error(error)
 
   const pendingCount = shipments?.filter(s => s.status === 'documents_pending').length || 0
   const lockedCash = claims?.reduce((sum, claim) => sum + (claim.amount_clp || 0), 0) || 0
