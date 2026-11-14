@@ -9,11 +9,14 @@ export async function Topbar() {
   let email = user?.email || ""
 
   if (user) {
+    // On utilise limit(1).maybeSingle() au lieu de single() pour éviter le crash si plusieurs orgs
     const { data: member } = await supabase
       .from('org_members')
       .select('organizations(name)')
       .eq('user_id', user.id)
-      .single()
+      .limit(1)
+      .maybeSingle()
+      
     if (member && member.organizations) {
       orgName = (member.organizations as any).name
     }
