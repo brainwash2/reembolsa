@@ -1,31 +1,23 @@
-import { createClient } from '@/lib/supabase/server'
-import { UserNav } from './UserNav'
+import { getCurrentOrg, getCurrentUser } from "@/lib/auth"
+import { UserNav } from "./UserNav"
 
 export async function Topbar() {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  
-  let orgName = "My Company"
-  let email = user?.email || ""
+  const [user, org] = await Promise.all([getCurrentUser(), getCurrentOrg()])
 
-  if (user) {
-    // On utilise limit(1).maybeSingle() au lieu de single() pour éviter le crash si plusieurs orgs
-    const { data: member } = await supabase
-      .from('org_members')
-      .select('organizations(name)')
-      .eq('user_id', user.id)
-      .limit(1)
-      .maybeSingle()
-      
-    if (member && member.organizations) {
-      orgName = (member.organizations as any).name
-    }
-  }
+  const email = user?.email ?? ""
+  // Real organization name from the database. No fake "My Company" fallback:
+  // if the membership is missing we say so.
+  const orgName = org?.orgName ?? "No organization"
 
   return (
-    <header className="h-16 border-b bg-white flex items-center justify-between px-8">
-      <div className="text-sm font-semibold text-slate-800">
-        {orgName}
+    <header className="flex h-16 items-center justify-between border-b bg-white px-8">
+      <div className="flex items-center gap-2">
+        <span className="text-sm font-semibold text-slate-800">{orgName}</span>
+        {org && (
+          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium capitalize text-slate-600">
+            {org.role}
+          </span>
+        )}
       </div>
       <UserNav orgName={orgName} email={email} />
     </header>
