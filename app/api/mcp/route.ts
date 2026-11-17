@@ -5,6 +5,9 @@
  *   list_pending_claims      open IVA-exportador claims of the caller's org
  *   get_live_exchange_rate   live/dated FX (Frankfurter -> mindicador -> open.er-api)
  *   estimate_refund          estimated CLP refund + expected date for one shipment
+ *   get_cashflow_forecast    dated cash forecast: what lands in 30/60/90 days, what is blocked
+ *   get_alerts               overdue refunds, blocked claims, claims ready to file
+ *   get_financing_estimate   illustrative advance on filed claims (not a lending offer)
  *
  * Two ways to authenticate (Authorization: Bearer ...):
  *   1. Supabase OAuth 2.1 access token (Claude connector flow). The token is verified and every
@@ -22,7 +25,7 @@ import { createMcpHandler, withMcpAuth } from "mcp-handler"
 import { z } from "zod"
 import { createAdminClient, hasAdminClient } from "@/lib/supabase/admin"
 import { getFxRate } from "@/lib/api-client"
-import { expectedRefundDate, REFUND_ETA_DAYS } from "@/lib/cashflow"
+import { buildAlerts, cashWindows, estimateAdvance, expectedRefundDate, inflowSchedule, isBlocked, projectCashflow, REFUND_ETA_DAYS, type ClaimView } from "@/lib/cashflow"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -307,8 +310,113 @@ const handler = createMcpHandler(
         }
       }
     )
+
+    const asView = (r: ClaimRow): ClaimView => ({
+      claim_id: r.claim_id, shipment_id: r.shipment_id, reference: r.reference, buyer: r.buyer, claim_status: r.claim_status,
+      amount_clp: r.amount_clp, filed_at: r.filed_at, missing_docs: r.missing_docs, open_errors: r.open_errors, source: r.source,
+    })
+
+    server.registerTool(
+      "get_cashflow_forecast",
+      {
+        title: "Cash-flow forecast of export-VAT refunds",
+        description:
+          "When the exporter's IVA refunds are expected to land: totals arriving within 30/60/90 days (filed claims only), cash that could start its clock if filed today, and cash stuck behind a failed check. Refund date = filing date + 45 days (planning assumption, not an SII deadline). Read-only.",
+        inputSchema: z.object({ top: z.number().int().min(1).max(50).default(10).describe("How many dated inflows to list") }),
+        annotations: { readOnlyHint: true, openWorldHint: false },
+      },
+      async (args, ctx) => {
+        const started = Date.now()
+        const p = principalOf(ctx as Ctx)
+        if (!p || !p.scopes.includes("claims:read")) return toolError("Not authorized for claims:read.")
+        try {
+          const views = (await fetchClaims(p, { onlyOpen: true, limit: 100 })).map(asView)
+          const schedule = inflowSchedule(views)
+          const w = cashWindows(schedule)
+          const proj = projectCashflow(views.map((v) => ({ amount_clp: v.amount_clp, status: v.claim_status, filed_at: v.filed_at, blocked: isBlocked(v) })))
+          const out = {
+            assumption: `refund = filing date + ${REFUND_ETA_DAYS} days (planning assumption, not an SII commitment)`,
+            total_locked_clp: proj.totalLockedClp,
+            arriving_30d_clp: w.filed30,
+            arriving_60d_clp: w.filed60,
+            arriving_90d_clp: w.filed90,
+            fileable_not_filed_clp: w.fileableClp,
+            blocked_clp: w.blockedClp,
+            overdue_claims: proj.overdueCount,
+            by_month_clp_millions: proj.points,
+            inflows: schedule.slice(0, args.top).map((i) => ({ reference: i.reference, buyer: i.buyer, amount_clp: i.amountClp, status: i.status, expected_date: i.blocked ? null : i.expectedDate, days_until: i.blocked ? null : i.daysUntil, overdue: i.overdue, blocked: i.blocked })),
+            disclaimer: "Estimate only. SII decides the amount and timing.",
+          }
+          await audit(p, "get_cashflow_forecast", args, "ok", started)
+          return text(
+            `${clp(out.total_locked_clp)} locked. Arriving within 30 days: ${clp(w.filed30)}; 60 days: ${clp(w.filed60)}; 90 days: ${clp(w.filed90)}. Ready to file (clock not started): ${clp(w.fileableClp)}. Blocked by a failed check: ${clp(w.blockedClp)}.` +
+              (proj.overdueCount ? ` ${proj.overdueCount} filed claim(s) are past the ${REFUND_ETA_DAYS}-day estimate.` : ""),
+            out
+          )
+        } catch (e) {
+          console.error("[mcp] get_cashflow_forecast", (e as Error).message)
+          await audit(p, "get_cashflow_forecast", args, "error", started)
+          return toolError("Could not build the forecast.")
+        }
+      }
+    )
+
+    server.registerTool(
+      "get_alerts",
+      {
+        title: "Cash alerts",
+        description: "Alerts derived by fixed rules from the caller's claims: refunds past the expected date, claims blocked by a failed check, claims ready to file, claims the rules engine has not checked. Read-only.",
+        inputSchema: z.object({}),
+        annotations: { readOnlyHint: true, openWorldHint: false },
+      },
+      async (_args, ctx) => {
+        const started = Date.now()
+        const p = principalOf(ctx as Ctx)
+        if (!p || !p.scopes.includes("claims:read")) return toolError("Not authorized for claims:read.")
+        try {
+          const alerts = buildAlerts((await fetchClaims(p, { onlyOpen: true, limit: 100 })).map(asView))
+          await audit(p, "get_alerts", {}, "ok", started)
+          return text(alerts.length === 0 ? "No alerts: nothing overdue or blocked." : alerts.map((a) => `[${a.level}] ${a.title}. ${a.detail}`).join("\n"), { alerts })
+        } catch (e) {
+          console.error("[mcp] get_alerts", (e as Error).message)
+          await audit(p, "get_alerts", {}, "error", started)
+          return toolError("Could not load alerts.")
+        }
+      }
+    )
+
+    server.registerTool(
+      "get_financing_estimate",
+      {
+        title: "Illustrative advance on filed refunds",
+        description:
+          "What an advance against ALREADY-FILED refund claims could look like for a given advance rate and annual fee. Illustrative arithmetic only: Reembolsa does not lend and this is not an offer. Blocked or unfiled claims are never included.",
+        inputSchema: z.object({
+          advance_rate: z.number().min(0).max(0.95).default(0.8).describe("Share of each claim advanced, 0 to 0.95"),
+          annual_fee_rate: z.number().min(0).max(1.2).default(0.24).describe("Assumed simple annual fee on the advanced amount, e.g. 0.24 = 24%"),
+        }),
+        annotations: { readOnlyHint: true, openWorldHint: false },
+      },
+      async (args, ctx) => {
+        const started = Date.now()
+        const p = principalOf(ctx as Ctx)
+        if (!p || !p.scopes.includes("claims:read")) return toolError("Not authorized for claims:read.")
+        try {
+          const filed = inflowSchedule((await fetchClaims(p, { onlyOpen: true, limit: 100 })).map(asView)).filter((i) => i.filed)
+          const rows = filed.map((i) => ({ reference: i.reference, refund_clp: i.amountClp, days_to_refund: Math.max(0, i.daysUntil), ...estimateAdvance({ amountClp: i.amountClp, daysToRefund: Math.max(0, i.daysUntil), advanceRate: args.advance_rate, annualFeeRate: args.annual_fee_rate }) }))
+          const sum = (k: "advanceClp" | "feeClp" | "netTodayClp" | "remainderAtRefundClp") => rows.reduce((t, r) => t + r[k], 0)
+          const out = { filed_claims: rows.length, filed_total_clp: filed.reduce((t, i) => t + i.amountClp, 0), cash_today_clp: sum("netTodayClp"), fee_clp: sum("feeClp"), still_arriving_from_sii_clp: sum("remainderAtRefundClp"), claims: rows, disclaimer: "Illustrative arithmetic, not an offer. Reembolsa does not lend." }
+          await audit(p, "get_financing_estimate", args, "ok", started)
+          return text(rows.length === 0 ? "No filed claims yet, so nothing to advance against." : `${rows.length} filed claim(s) worth ${clp(out.filed_total_clp)}. At ${Math.round(args.advance_rate * 100)}% advance and ${Math.round(args.annual_fee_rate * 100)}% annual fee: ${clp(out.cash_today_clp)} cash today, fee ${clp(out.fee_clp)}. Illustrative only.`, out)
+        } catch (e) {
+          console.error("[mcp] get_financing_estimate", (e as Error).message)
+          await audit(p, "get_financing_estimate", args, "error", started)
+          return toolError("Could not estimate.")
+        }
+      }
+    )
   },
-  { serverInfo: { name: "reembolsa", version: "1.0.0" }, verboseLogs: false }
+  { serverInfo: { name: "reembolsa", version: "1.1.0" }, verboseLogs: false }
 )
 
 const authed = withMcpAuth(handler, verifyToken, {

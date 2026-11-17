@@ -17,9 +17,9 @@ export function UserNav({ orgName, email }: { orgName: string, email: string }) 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button className="outline-none">
-          <Avatar className="h-9 w-9 bg-teal-600 text-white cursor-pointer hover:opacity-80 transition-opacity">
-            <AvatarFallback>{orgName.substring(0, 2).toUpperCase()}</AvatarFallback>
+        <button className="flex h-11 w-11 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-teal-600" aria-label="Account menu">
+          <Avatar className="h-9 w-9 cursor-pointer transition-opacity hover:opacity-80">
+            <AvatarFallback className="bg-teal-600 text-xs font-semibold text-white">{orgName.substring(0, 2).toUpperCase()}</AvatarFallback>
           </Avatar>
         </button>
       </DropdownMenuTrigger>

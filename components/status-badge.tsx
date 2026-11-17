@@ -15,7 +15,7 @@ export function ShipmentStatusBadge({ status }: { status: ShipmentStatus }) {
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium tabular-nums",
+        "inline-flex shrink-0 items-center whitespace-nowrap rounded-full border px-2.5 py-0.5 text-xs font-medium tabular-nums",
         shipmentStatusStyles[status]
       )}
     >
@@ -36,7 +36,7 @@ export function ClaimStatusBadge({ status }: { status: ClaimStatus }) {
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium tabular-nums",
+        "inline-flex shrink-0 items-center whitespace-nowrap rounded-full border px-2.5 py-0.5 text-xs font-medium tabular-nums",
         claimStatusStyles[status]
       )}
     >
