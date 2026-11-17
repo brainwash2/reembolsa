@@ -1,5 +1,5 @@
 -- =====================================================================
--- rls_smoke.sql  - plain-SQL regression test for migrations 0001 -> 0006.
+-- rls_smoke.sql  - plain-SQL regression test for migrations 0001 -> 0007.
 -- Run on a scratch database (NOT production):
 --   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/tests/rls_smoke.sql
 -- Everything runs inside one transaction and is rolled back at the end.
@@ -8,7 +8,7 @@
 begin;
 
 create schema t;
-grant usage on schema t to authenticated, anon;
+grant usage on schema t to authenticated, anon, service_role;
 
 create function t.as_user(u uuid, extra jsonb default '{}'::jsonb) returns void language plpgsql as $$
 begin
@@ -146,7 +146,7 @@ select t.must_fail($$update public.audit_log set op = 'INSERT'$$, 'append-only',
 
 -- ---------- A. MCP / OAuth sessions are read-only ------------------------
 select t.as_user('aaaaaaaa-0000-0000-0000-000000000001', '{"client_id":"claude-mcp"}');
-select t.must_equal($$select count(*)::text from public.v_pending_claims$$, '1', 'A: OAuth session can read via security_invoker view');
+select t.must_equal($$select count(*)::text from public.v_shipment_claims$$, '1', 'A: OAuth session can read via security_invoker view');
 select t.must_equal($$with u as (update public.shipments set buyer = 'hacked' returning 1) select count(*)::text from u$$, '0', 'A: OAuth session cannot mutate tables directly');
 
 -- ---------- B. factoring package, consent-gated ---------------------------
@@ -214,9 +214,88 @@ insert into public.shipments (org_id, reference, buyer, destination, invoice_amo
 values (current_setting('t.orgb')::uuid, 'EXP-CO-1', 'Miami Importers', 'USA', 10000, 'USD', 4200000);
 select t.must_equal($$select local_currency || '/' || tax_authority || '/' || local_form_code from public.iva_claims$$, 'COP/DIAN/F010', 'LatAm: claim stamped with COP / DIAN / F010');
 select t.must_equal($$select missing_docs::text from public.iva_claims$$, '{DEX,"Commercial invoice"}', 'LatAm: required docs are invoice + DEX');
-select t.must_equal($$select coalesce(amount_clp::text, 'null') from public.iva_claims$$, 'null', 'LatAm: amount_clp compat column is null for non-CLP claims');
+select t.must_equal($$select amount_clp::text from public.iva_claims$$, '0', 'LatAm: amount_clp stays 0 for non-CLP claims (no mixed currencies)');
 select t.must_equal($$select amount_local::text from public.iva_claims$$, '4200000', 'LatAm: amount_local carries the COP amount');
 
+
+-- ---------- 0007 ingestion: idempotent, provenance, engine-owned columns ------
+select t.as_user('aaaaaaaa-0000-0000-0000-000000000001');
+insert into public.shipments (org_id, reference, buyer, destination, invoice_amount, currency, exchange_rate, exchange_rate_date,
+                              exchange_rate_source, export_value_clp, input_vat_local, status, source, external_ref)
+values (current_setting('t.orga')::uuid, 'EXP-2026-0101', 'Shanghai Cherry Partners Ltd (demo)', 'China', 76500, 'USD', 905.5, current_date,
+        'frankfurter', 63385000, 7942000, 'documents_pending', 'sii_demo', 'SII-DEMO-0001');
+select t.must_equal($$select amount_clp::text from public.iva_claims c join public.shipments s on s.id = c.shipment_id where s.external_ref = 'SII-DEMO-0001'$$, '7942000', '0007: ingested shipment auto-creates its claim');
+select t.must_fail($$insert into public.shipments (org_id, reference, buyer, destination, invoice_amount, currency, source, external_ref)
+                      values (current_setting('t.orga')::uuid, 'EXP-DUP', 'x', 'x', 1, 'USD', 'sii_demo', 'SII-DEMO-0001')$$,
+                   'unique|duplicate', '0007: re-sync cannot duplicate an SII record');
+-- ---------- 0005 (no generated columns): clients can still write amount_clp ------
+update public.iva_claims set amount_clp = 7000000 where shipment_id = (select id from public.shipments where external_ref = 'SII-DEMO-0001');
 reset role;
+select t.must_equal($$select attgenerated::text from pg_attribute where attrelid = 'public.iva_claims'::regclass and attname = 'amount_clp'$$, '', '0005: amount_clp is NOT a generated column');
+select t.must_equal($$select amount_clp::text || '/' || amount_local::text from public.iva_claims where shipment_id = (select id from public.shipments where external_ref = 'SII-DEMO-0001')$$, '7000000/7000000', '0005: amount_clp edit propagates to amount_local');
+
+select t.as_user('aaaaaaaa-0000-0000-0000-000000000001');
+select t.must_fail($$insert into public.shipments (org_id, reference, buyer, destination, invoice_amount, currency, source)
+                      values (current_setting('t.orga')::uuid, 'EXP-BAD', 'x', 'x', 1, 'USD', 'sii_demo')$$,
+                   'shipments_source_check|check', '0007: sii_demo rows must carry an external_ref');
+select t.must_fail($$insert into public.documents (org_id, shipment_id, type, file_url, source)
+                      select org_id, id, 'invoice', org_id || '/' || id || '/x.json', 'sii_demo' from public.shipments where external_ref = 'SII-DEMO-0001'$$,
+                   'permission denied', '0007: clients cannot create sii_demo documents');
+select t.must_fail($$insert into public.ingest_runs (org_id, source, fetched, inserted) values (current_setting('t.orgb')::uuid, 'sii_demo', 5, 5)$$,
+                   'row-level security', '0007: cannot write sync history into another org');
+insert into public.ingest_runs (org_id, source, fetched, inserted, fx) values (current_setting('t.orga')::uuid, 'sii_demo', 5, 1, '[{"pair":"USD/CLP"}]');
+
+-- service role: engine verdict then claim reaches filed through the SAME gate
+reset role;
+select set_config('t.s2', (select id::text from public.shipments where external_ref = 'SII-DEMO-0001'), false);
+insert into public.documents (org_id, shipment_id, type, source, file_url, validated, extracted_data) values
+  (current_setting('t.orga')::uuid, current_setting('t.s2')::uuid, 'invoice', 'sii_demo',
+   current_setting('t.orga') || '/' || current_setting('t.s2') || '/sii-dte-110-1.json', true, '{}'),
+  (current_setting('t.orga')::uuid, current_setting('t.s2')::uuid, 'dus', 'sii_demo',
+   current_setting('t.orga') || '/' || current_setting('t.s2') || '/sii-dus-1.json', false, '{}');
+select t.must_equal($$select missing_docs::text from public.iva_claims where shipment_id = current_setting('t.s2')::uuid$$, '{DUS}', '0007: failed DUS check keeps DUS in missing_docs');
+select t.must_fail($$update public.iva_claims set status = 'ready' where shipment_id = current_setting('t.s2')::uuid$$, 'missing documents', '0007: gate blocks a claim whose DUS check failed');
+update public.documents set validated = true where shipment_id = current_setting('t.s2')::uuid and type = 'dus';
+update public.iva_claims set status = 'ready' where shipment_id = current_setting('t.s2')::uuid;
+update public.iva_claims set status = 'filed', filed_at = now() - interval '38 days' where shipment_id = current_setting('t.s2')::uuid;
+select t.must_equal($$select ((now() - filed_at) between interval '37 days' and interval '39 days')::text from public.iva_claims where shipment_id = current_setting('t.s2')::uuid$$, 'true', '0007: backdated filed_at honoured (drives the +45d projection)');
+
+-- ---------- A2. MCP personal access tokens ----------------------------------
+select t.as_user('aaaaaaaa-0000-0000-0000-000000000001');
+select set_config('t.pat', (select token from public.create_mcp_token(current_setting('t.orga')::uuid, 'claude-desktop', array['claims:read'], 30)), false);
+select t.must_equal($$select (current_setting('t.pat') like 'rbs\_%')::text$$, 'true', 'A2: token has rbs_ prefix');
+select t.must_equal($$select count(*)::text from public.mcp_tokens$$, '1', 'A2: owner sees own token row');
+select t.must_fail($$select token_hash from public.mcp_tokens$$, 'permission denied', 'A2: token_hash is never readable by clients');
+select t.must_fail($$select public.create_mcp_token(current_setting('t.orgb')::uuid, 'x')$$, 'not allowed', 'A2: cannot mint a token for another org');
+select t.must_fail($$insert into public.mcp_tokens (org_id, user_id, name, token_prefix, token_hash, scopes, expires_at)
+                      values (current_setting('t.orga')::uuid, 'aaaaaaaa-0000-0000-0000-000000000001', 'n', 'rbs_', repeat('a',64), array['claims:read'], now() + interval '1 day')$$,
+                   'permission denied', 'A2: clients cannot insert tokens directly');
+select t.must_fail($$select public.mcp_claims(gen_random_uuid())$$, 'permission denied', 'A2: mcp_claims is not callable by end users');
+select t.must_fail($$select * from public.mcp_authenticate_token(repeat('a',64))$$, 'permission denied', 'A2: mcp_authenticate_token is not callable by end users');
+select t.as_user('bbbbbbbb-0000-0000-0000-000000000002');
+select t.must_equal($$select count(*)::text from public.mcp_tokens$$, '0', 'A2: other org cannot see the token');
+select t.as_user('aaaaaaaa-0000-0000-0000-000000000001', '{"client_id":"claude-mcp"}');
+select t.must_fail($$select public.create_mcp_token(current_setting('t.orga')::uuid, 'sneaky')$$, 'not allowed', 'A2: OAuth/agent sessions cannot mint tokens');
+reset role;
+
+-- service role path (what app/api/mcp/route.ts does)
+set local role service_role;
+select set_config('t.tok', (select token_id::text from public.mcp_authenticate_token(encode(sha256(convert_to(current_setting('t.pat'), 'UTF8')), 'hex'))), false);
+select t.must_equal($$select (current_setting('t.tok') <> '')::text$$, 'true', 'A2: valid token authenticates');
+select t.must_equal($$select count(*)::text from public.mcp_authenticate_token(repeat('0',64))$$, '0', 'A2: unknown token does not authenticate');
+select t.must_equal($$select count(*)::text from public.mcp_claims(current_setting('t.tok')::uuid)$$, '2', 'A2: token reads ONLY its own org claims (2 open)');
+select t.must_equal($$select count(*)::text from public.mcp_claims(current_setting('t.tok')::uuid, 'EXP-2026-0101')$$, '1', 'A2: filter by reference');
+select t.must_fail($$select * from public.mcp_claims(gen_random_uuid())$$, 'invalid token', 'A2: unknown token id is rejected');
+reset role;
+
+-- revoke + expiry + membership removal
+select t.as_user('aaaaaaaa-0000-0000-0000-000000000001');
+select public.revoke_mcp_token(current_setting('t.tok')::uuid);
+reset role;
+set local role service_role;
+select t.must_equal($$select count(*)::text from public.mcp_authenticate_token(encode(sha256(convert_to(current_setting('t.pat'), 'UTF8')), 'hex'))$$, '0', 'A2: revoked token stops authenticating');
+select t.must_fail($$select * from public.mcp_claims(current_setting('t.tok')::uuid)$$, 'invalid token', 'A2: revoked token cannot read claims');
+reset role;
+
 rollback;
 select 'ALL CHECKS PASSED (transaction rolled back)' as result;

@@ -1,8 +1,10 @@
 -- =====================================================================
--- 0006_scaling_features.sql   ("Financial OS" foundations)
---   A. MCP-native agent workflow   (audit + read views + write guard)
---   B. Factoring data package      (1-click, consent-gated, non-lending)
+-- 0006_scaling_features.sql   ("Financial OS" foundations)   REWRITTEN
+--   A. MCP-native agent workflow: read-only OAuth sessions, read model,
+--      MCP personal access tokens (mcp_tokens) + service-role RPCs, call log
+--   B. Factoring DATA PACKAGES (1-click, consent-gated, non-lending)
 --   C. Open Finance (SFA) readiness (consent ledger + bank data model)
+-- Idempotent (safe to re-run) and compatible with the corrected 0005.
 -- Apply AFTER 0005.
 -- Design rule for B and C: Reembolsa moves DATA with consent. It never
 -- scores, ranks, advances or lends. Partner statuses are partner-reported.
@@ -12,7 +14,7 @@
 -- SHARED: consent ledger (used by B and C; Ley 21.719 / Ley 1581 / Ley 29733
 -- all require specific, informed, revocable consent for this kind of sharing)
 -- =====================================================================
-create table public.data_consents (
+create table if not exists public.data_consents (
   id                   uuid primary key default gen_random_uuid(),
   org_id               uuid not null references public.organizations(id) on delete cascade,
   granted_by           uuid not null default auth.uid() references auth.users(id),
@@ -31,9 +33,9 @@ create table public.data_consents (
   check (expires_at > granted_at),
   check ((revoked_at is null) = (revoked_by is null))
 );
-create index data_consents_org_idx on public.data_consents (org_id, counterparty_kind);
+create index if not exists data_consents_org_idx on public.data_consents (org_id, counterparty_kind);
 
-create table public.consent_events (
+create table if not exists public.consent_events (
   id         bigint generated always as identity primary key,
   consent_id uuid not null references public.data_consents(id) on delete cascade,
   org_id     uuid not null,
@@ -42,18 +44,22 @@ create table public.consent_events (
   meta       jsonb not null default '{}'::jsonb,
   at         timestamptz not null default now()
 );
-create index consent_events_consent_idx on public.consent_events (consent_id, at);
+create index if not exists consent_events_consent_idx on public.consent_events (consent_id, at);
 
 alter table public.data_consents enable row level security;
 alter table public.consent_events enable row level security;
 
+drop policy if exists consents_select on public.data_consents;
 create policy consents_select on public.data_consents for select to authenticated
   using (public.has_org_role(org_id, array['owner','accountant']));
+drop policy if exists consents_insert on public.data_consents;
 create policy consents_insert on public.data_consents for insert to authenticated
   with check (public.has_org_role(org_id, array['owner']) and granted_by = (select auth.uid()));
+drop policy if exists consents_revoke on public.data_consents;
 create policy consents_revoke on public.data_consents for update to authenticated
   using (public.has_org_role(org_id, array['owner']))
   with check (public.has_org_role(org_id, array['owner']));
+drop policy if exists consent_events_select on public.consent_events;
 create policy consent_events_select on public.consent_events for select to authenticated
   using (public.has_org_role(org_id, array['owner','accountant']));
 
@@ -88,6 +94,7 @@ begin
   return null;
 end;
 $$;
+drop trigger if exists data_consents_ledger on public.data_consents;
 create trigger data_consents_ledger
   after insert or update on public.data_consents
   for each row execute function public.log_consent_event();
@@ -110,7 +117,7 @@ grant  execute on function public.consent_is_active(uuid, text) to authenticated
 -- =====================================================================
 -- B. FACTORING DATA PACKAGE
 -- =====================================================================
-create table public.factoring_partners (
+create table if not exists public.factoring_partners (
   id                 uuid primary key default gen_random_uuid(),
   slug               text not null unique check (slug ~ '^[a-z0-9-]{2,40}$'),
   name               text not null,
@@ -120,11 +127,12 @@ create table public.factoring_partners (
   created_at         timestamptz not null default now()
 );
 alter table public.factoring_partners enable row level security;
+drop policy if exists partners_read on public.factoring_partners;
 create policy partners_read on public.factoring_partners for select to authenticated using (active);
 revoke all on public.factoring_partners from anon, authenticated;
 grant select (id, slug, name, country, active) on public.factoring_partners to authenticated;
 
-create table public.data_packages (
+create table if not exists public.data_packages (
   id                    uuid primary key default gen_random_uuid(),
   org_id                uuid not null,
   shipment_id           uuid not null,
@@ -142,9 +150,9 @@ create table public.data_packages (
   check (rules_passed),
   foreign key (shipment_id, org_id) references public.shipments(id, org_id) on delete cascade
 );
-create index data_packages_org_idx on public.data_packages (org_id, created_at desc);
+create index if not exists data_packages_org_idx on public.data_packages (org_id, created_at desc);
 
-create table public.package_shares (
+create table if not exists public.package_shares (
   id                   uuid primary key default gen_random_uuid(),
   org_id               uuid not null,
   package_id           uuid not null,
@@ -165,12 +173,12 @@ create table public.package_shares (
   foreign key (package_id, org_id) references public.data_packages(id, org_id) on delete cascade,
   foreign key (consent_id, org_id) references public.data_consents(id, org_id)
 );
-create index package_shares_org_idx     on public.package_shares (org_id, status);
-create index package_shares_partner_idx on public.package_shares (partner_id);
-create index package_shares_consent_idx on public.package_shares (consent_id);
+create index if not exists package_shares_org_idx     on public.package_shares (org_id, status);
+create index if not exists package_shares_partner_idx on public.package_shares (partner_id);
+create index if not exists package_shares_consent_idx on public.package_shares (consent_id);
 
 -- raw inbound partner events: service role only (no policy, no grant)
-create table public.partner_events (
+create table if not exists public.partner_events (
   id              bigint generated always as identity primary key,
   partner_id      uuid not null references public.factoring_partners(id),
   share_id        uuid references public.package_shares(id) on delete set null,
@@ -180,13 +188,15 @@ create table public.partner_events (
   received_at     timestamptz not null default now(),
   processed_at    timestamptz
 );
-create index partner_events_share_idx on public.partner_events (share_id);
+create index if not exists partner_events_share_idx on public.partner_events (share_id);
 alter table public.partner_events enable row level security;
 revoke all on public.partner_events from anon, authenticated;
 
 alter table public.data_packages  enable row level security;
 alter table public.package_shares enable row level security;
+drop policy if exists packages_select on public.data_packages;
 create policy packages_select on public.data_packages  for select to authenticated using (public.is_org_member(org_id));
+drop policy if exists shares_select on public.package_shares;
 create policy shares_select   on public.package_shares for select to authenticated
   using (public.has_org_role(org_id, array['owner','accountant']));
 revoke all on public.data_packages, public.package_shares from anon, authenticated;
@@ -283,6 +293,7 @@ begin
   return null;
 end;
 $$;
+drop trigger if exists consents_expire_shares on public.data_consents;
 create trigger consents_expire_shares
   after update of revoked_at on public.data_consents
   for each row execute function public.expire_pending_shares_on_revoke();
@@ -296,7 +307,7 @@ grant  execute on function public.share_data_package(uuid, uuid, uuid, text)    
 -- C. OPEN FINANCE (SFA) READINESS - data model only; no live connector until
 --    Chile's SFA go-live (July 2027) and CMF participant registration.
 -- =====================================================================
-create table public.bank_connections (
+create table if not exists public.bank_connections (
   id               uuid primary key default gen_random_uuid(),
   org_id           uuid not null,
   consent_id       uuid not null,
@@ -313,10 +324,10 @@ create table public.bank_connections (
   unique (id, org_id),
   foreign key (consent_id, org_id) references public.data_consents(id, org_id)
 );
-create index bank_connections_org_idx on public.bank_connections (org_id, status);
-create index bank_connections_consent_idx on public.bank_connections (consent_id);
+create index if not exists bank_connections_org_idx on public.bank_connections (org_id, status);
+create index if not exists bank_connections_consent_idx on public.bank_connections (consent_id);
 
-create table public.bank_accounts (
+create table if not exists public.bank_accounts (
   id                  uuid primary key default gen_random_uuid(),
   org_id              uuid not null,
   connection_id       uuid not null,
@@ -330,9 +341,9 @@ create table public.bank_accounts (
   unique (connection_id, external_account_id),
   foreign key (connection_id, org_id) references public.bank_connections(id, org_id) on delete cascade
 );
-create index bank_accounts_org_idx on public.bank_accounts (org_id);
+create index if not exists bank_accounts_org_idx on public.bank_accounts (org_id);
 
-create table public.sfa_transactions (
+create table if not exists public.sfa_transactions (
   id                      uuid primary key default gen_random_uuid(),
   org_id                  uuid not null,
   account_id              uuid not null,
@@ -353,18 +364,22 @@ create table public.sfa_transactions (
   foreign key (account_id, org_id)       references public.bank_accounts(id, org_id) on delete cascade,
   foreign key (matched_claim_id, org_id) references public.iva_claims(id, org_id) on delete set null (matched_claim_id)
 );
-create index sfa_tx_org_booked_idx on public.sfa_transactions (org_id, booked_at desc);
-create index sfa_tx_account_idx    on public.sfa_transactions (account_id);
-create index sfa_tx_claim_idx      on public.sfa_transactions (matched_claim_id) where matched_claim_id is not null;
+create index if not exists sfa_tx_org_booked_idx on public.sfa_transactions (org_id, booked_at desc);
+create index if not exists sfa_tx_account_idx    on public.sfa_transactions (account_id);
+create index if not exists sfa_tx_claim_idx      on public.sfa_transactions (matched_claim_id) where matched_claim_id is not null;
 
 alter table public.bank_connections enable row level security;
 alter table public.bank_accounts    enable row level security;
 alter table public.sfa_transactions enable row level security;
 
 -- Tier-1 financial data: OWNER only. Sync workers write with the service role.
+drop policy if exists bank_conn_select on public.bank_connections;
 create policy bank_conn_select on public.bank_connections for select to authenticated using (public.has_org_role(org_id, array['owner']));
+drop policy if exists bank_acct_select on public.bank_accounts;
 create policy bank_acct_select on public.bank_accounts    for select to authenticated using (public.has_org_role(org_id, array['owner']));
+drop policy if exists sfa_tx_select on public.sfa_transactions;
 create policy sfa_tx_select    on public.sfa_transactions for select to authenticated using (public.has_org_role(org_id, array['owner']));
+drop policy if exists sfa_tx_confirm on public.sfa_transactions;
 create policy sfa_tx_confirm   on public.sfa_transactions for update to authenticated
   using (public.has_org_role(org_id, array['owner'])) with check (public.has_org_role(org_id, array['owner']));
 
@@ -395,6 +410,9 @@ declare t text;
 begin
   foreach t in array array['organizations','org_members','shipments','documents','iva_claims','issues',
                            'data_consents','sfa_transactions'] loop
+    execute format('drop policy if exists %I on public.%I', t || '_no_oauth_ins', t);
+    execute format('drop policy if exists %I on public.%I', t || '_no_oauth_upd', t);
+    execute format('drop policy if exists %I on public.%I', t || '_no_oauth_del', t);
     execute format('create policy %I on public.%I as restrictive for insert to authenticated
                       with check (not public.is_oauth_client_session())', t || '_no_oauth_ins', t);
     execute format('create policy %I on public.%I as restrictive for update to authenticated
@@ -404,17 +422,37 @@ begin
   end loop;
 end $$;
 
--- Read model for the MCP tools (RLS applies because security_invoker = true)
-create view public.v_pending_claims with (security_invoker = true) as
-select c.id            as claim_id,
+-- the read model exposes shipments.source; 0007 owns its constraint/index (both add-column steps are idempotent)
+alter table public.shipments
+  add column if not exists source       text not null default 'manual',
+  add column if not exists external_ref text;
+
+-- Read model for the MCP tools (RLS applies because security_invoker = true).
+-- Plain columns only; amount_clp is the CLP claim amount (0005), amount_local the local-currency one.
+drop function if exists public.mcp_claims(uuid, text, boolean, int);
+drop view if exists public.v_shipment_claims;
+create view public.v_shipment_claims with (security_invoker = true) as
+select c.id               as claim_id,
        c.org_id,
+       s.id               as shipment_id,
        s.reference,
        s.buyer,
        s.destination,
-       c.status,
+       s.incoterm,
+       s.currency,
+       s.invoice_amount,
+       s.export_value_clp,
+       s.exchange_rate,
+       s.exchange_rate_date,
+       s.shipment_date,
+       s.status           as shipment_status,
+       s.source,
+       c.status           as claim_status,
+       c.amount_clp,
        c.amount_local,
        c.local_currency,
        c.missing_docs,
+       c.filed_at,
        c.tax_authority,
        c.local_form_code,
        (select count(*) from public.issues i
@@ -422,8 +460,7 @@ select c.id            as claim_id,
            and i.severity = 'error' and not i.resolved) as open_errors,
        c.created_at
   from public.iva_claims c
-  join public.shipments s on s.id = c.shipment_id and s.org_id = c.org_id
- where c.status <> 'paid';
+  join public.shipments s on s.id = c.shipment_id and s.org_id = c.org_id;
 
 create or replace function public.iva_locked_summary()
 returns table (local_currency char(3), status text, claims bigint, amount_local bigint)
@@ -439,7 +476,7 @@ as $$
    order by c.local_currency, c.status;
 $$;
 
-create table public.mcp_tool_calls (
+create table if not exists public.mcp_tool_calls (
   id          bigint generated always as identity primary key,
   org_id      uuid,
   user_id     uuid,
@@ -450,14 +487,159 @@ create table public.mcp_tool_calls (
   duration_ms int,
   at          timestamptz not null default now()
 );
-create index mcp_tool_calls_org_at_idx on public.mcp_tool_calls (org_id, at desc);
+create index if not exists mcp_tool_calls_org_at_idx on public.mcp_tool_calls (org_id, at desc);
 alter table public.mcp_tool_calls enable row level security;
+drop policy if exists mcp_calls_select on public.mcp_tool_calls;
 create policy mcp_calls_select on public.mcp_tool_calls for select to authenticated
-  using (public.has_org_role(org_id, array['owner']));
+  using (user_id = (select auth.uid()) or public.has_org_role(org_id, array['owner']));
 revoke all on public.mcp_tool_calls from anon, authenticated;
 grant select on public.mcp_tool_calls to authenticated;   -- inserts: service role from the MCP server
 
-grant select on public.v_pending_claims to authenticated;
-revoke all on public.v_pending_claims from anon;
 revoke execute on function public.iva_locked_summary() from public, anon;
 grant  execute on function public.iva_locked_summary() to authenticated;
+grant  select on public.v_shipment_claims to authenticated;
+revoke all on public.v_shipment_claims from anon;
+
+-- ---------------------------------------------------------------------
+-- A2. MCP PERSONAL ACCESS TOKENS (for agents/clients that cannot do OAuth)
+--     * plaintext shown ONCE at creation, only its SHA-256 is stored
+--     * a token acts as ONE user inside ONE org and is READ-ONLY by design:
+--       the MCP server uses the service role but only through the two
+--       SECURITY DEFINER functions below, which scope every row to the token's org
+--     * deleting the membership deletes the token (composite FK, ON DELETE CASCADE)
+--     * no pgcrypto needed: gen_random_uuid() and sha256() are in core Postgres
+-- ---------------------------------------------------------------------
+create table if not exists public.mcp_tokens (
+  id           uuid primary key default gen_random_uuid(),
+  org_id       uuid not null,
+  user_id      uuid not null,
+  name         text not null check (length(btrim(name)) between 1 and 80),
+  token_prefix text not null,                                      -- first chars, for display only
+  token_hash   text not null unique check (token_hash ~ '^[0-9a-f]{64}$'),
+  scopes       text[] not null
+               check (cardinality(scopes) > 0
+                      and scopes <@ array['claims:read','fx:read','refund:estimate']),
+  created_at   timestamptz not null default now(),
+  expires_at   timestamptz not null,
+  last_used_at timestamptz,
+  revoked_at   timestamptz,
+  check (expires_at > created_at),
+  foreign key (org_id, user_id) references public.org_members (org_id, user_id) on delete cascade
+);
+create index if not exists mcp_tokens_org_idx  on public.mcp_tokens (org_id) where revoked_at is null;
+create index if not exists mcp_tokens_user_idx on public.mcp_tokens (user_id);
+
+alter table public.mcp_tokens enable row level security;
+drop policy if exists mcp_tokens_select on public.mcp_tokens;
+create policy mcp_tokens_select on public.mcp_tokens for select to authenticated
+  using (user_id = (select auth.uid()) or public.has_org_role(org_id, array['owner']));
+revoke all on public.mcp_tokens from anon, authenticated;
+grant select (id, org_id, user_id, name, token_prefix, scopes, created_at, expires_at, last_used_at, revoked_at)
+  on public.mcp_tokens to authenticated;                           -- token_hash is never readable
+
+create or replace function public.create_mcp_token(
+  p_org uuid, p_name text, p_scopes text[] default array['claims:read','fx:read','refund:estimate'], p_ttl_days int default 30)
+returns table (id uuid, token text, expires_at timestamptz)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_token text;
+  v_id    uuid;
+  v_exp   timestamptz;
+begin
+  if auth.uid() is null or public.is_oauth_client_session() then
+    raise exception 'not allowed' using errcode = '42501';          -- agents cannot mint their own tokens
+  end if;
+  if not public.has_org_role(p_org, array['owner','accountant']) then
+    raise exception 'not allowed' using errcode = '42501';
+  end if;
+  if p_ttl_days is null or p_ttl_days < 1 or p_ttl_days > 90 then
+    raise exception 'ttl must be 1..90 days' using errcode = '22023';
+  end if;
+
+  v_token := 'rbs_' || replace(gen_random_uuid()::text || gen_random_uuid()::text, '-', '');
+  v_exp   := now() + make_interval(days => p_ttl_days);
+
+  insert into public.mcp_tokens (org_id, user_id, name, token_prefix, token_hash, scopes, expires_at)
+  values (p_org, auth.uid(), p_name, left(v_token, 8),
+          encode(sha256(convert_to(v_token, 'UTF8')), 'hex'), p_scopes, v_exp)
+  returning mcp_tokens.id into v_id;
+
+  return query select v_id, v_token, v_exp;
+end;
+$$;
+
+create or replace function public.revoke_mcp_token(p_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  update public.mcp_tokens t
+     set revoked_at = coalesce(t.revoked_at, now())
+   where t.id = p_id
+     and (t.user_id = auth.uid() or public.has_org_role(t.org_id, array['owner']));
+  if not found then raise exception 'not allowed' using errcode = '42501'; end if;
+end;
+$$;
+
+-- Called by the MCP route (service role) with sha256(token) hex.
+create or replace function public.mcp_authenticate_token(p_hash text)
+returns table (token_id uuid, org_id uuid, user_id uuid, scopes text[], expires_at timestamptz)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  r public.mcp_tokens;
+begin
+  select * into r from public.mcp_tokens t
+   where t.token_hash = p_hash and t.revoked_at is null and t.expires_at > now();
+  if not found then return; end if;
+  if r.last_used_at is null or r.last_used_at < now() - interval '1 minute' then
+    update public.mcp_tokens set last_used_at = now() where id = r.id;
+  end if;
+  return query select r.id, r.org_id, r.user_id, r.scopes, r.expires_at;
+end;
+$$;
+
+-- Claims for a token's org. Re-validates the token on every call and never trusts a caller-supplied org.
+create or replace function public.mcp_claims(
+  p_token uuid, p_reference text default null, p_only_open boolean default true, p_limit int default 50)
+returns setof public.v_shipment_claims
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_org uuid;
+begin
+  select t.org_id into v_org from public.mcp_tokens t
+   where t.id = p_token and t.revoked_at is null and t.expires_at > now()
+     and 'claims:read' = any (t.scopes);
+  if v_org is null then
+    raise exception 'invalid token' using errcode = '42501';
+  end if;
+
+  return query
+    select v.* from public.v_shipment_claims v
+     where v.org_id = v_org
+       and (p_reference is null or v.reference = p_reference or v.shipment_id::text = p_reference)
+       and (not p_only_open or v.claim_status <> 'paid')
+     order by v.created_at desc
+     limit least(greatest(coalesce(p_limit, 50), 1), 200);
+end;
+$$;
+
+revoke execute on function public.create_mcp_token(uuid, text, text[], int) from public, anon;
+revoke execute on function public.revoke_mcp_token(uuid)                     from public, anon;
+grant  execute on function public.create_mcp_token(uuid, text, text[], int) to authenticated;
+grant  execute on function public.revoke_mcp_token(uuid)                    to authenticated;
+revoke execute on function public.mcp_authenticate_token(text)               from public, anon, authenticated;
+revoke execute on function public.mcp_claims(uuid, text, boolean, int)       from public, anon, authenticated;
+grant  execute on function public.mcp_authenticate_token(text)               to service_role;
+grant  execute on function public.mcp_claims(uuid, text, boolean, int)       to service_role;
